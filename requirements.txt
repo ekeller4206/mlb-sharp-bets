@@ -1,0 +1,8 @@
+# MLB Sharp Tool — 2026 Season
+# Python 3.11+ recommended
+
+streamlit>=1.35.0
+pybaseball>=2.2.7
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
