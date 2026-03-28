@@ -726,53 +726,70 @@ with tab_props:
             return project_total_bases(iso, woba, h9_b if team == team_a else h9_a,
                                        whip_b if team == team_a else whip_a)
 
-        bw["Proj TB"]   = bw.apply(_proj_tb, axis=1)
-        bw["Proj Hits"] = bw.apply(
-            lambda r: round(float(r.get("W_wOBA", r.get("wOBA", 0.320))) * 3.5, 2), axis=1
-        )
+        if bw.empty:
+            st.caption("⚠️ No batter data available yet for this team.")
+        else:
+            bw["Proj TB"]   = bw.apply(_proj_tb, axis=1)
+            bw["Proj Hits"] = bw.apply(
+                lambda r: round(float(r.get("W_wOBA", r.get("wOBA", 0.320))) * 3.5, 2), axis=1
+            )
 
-        display_cols = ["Name","PA",
-                        "W_wOBA" if "W_wOBA" in bw.columns else "wOBA",
-                        "W_ISO"  if "W_ISO"  in bw.columns else "ISO",
-                        "W_K%"   if "W_K%"   in bw.columns else "K%",
-                        "Proj TB","Proj Hits"]
-        display_cols = [c for c in display_cols if c in bw.columns]
-        rename_map   = {"W_wOBA":"wOBA(W)","W_ISO":"ISO(W)","W_K%":"K%(W)"}
-        show_df      = bw[display_cols].rename(columns=rename_map).head(9)
+            display_cols = ["Name","PA",
+                            "W_wOBA" if "W_wOBA" in bw.columns else "wOBA",
+                            "W_ISO"  if "W_ISO"  in bw.columns else "ISO",
+                            "W_K%"   if "W_K%"   in bw.columns else "K%",
+                            "Proj TB","Proj Hits"]
+            display_cols = [c for c in display_cols if c in bw.columns]
+            rename_map   = {"W_wOBA":"wOBA(W)","W_ISO":"ISO(W)","W_K%":"K%(W)"}
+            show_df      = bw[display_cols].rename(columns=rename_map).head(9)
 
-        st.dataframe(
-            show_df.style.format({
-                "wOBA(W)":  "{:.3f}",
-                "ISO(W)":   "{:.3f}",
-                "K%(W)":    "{:.1%}",
-                "Proj TB":  "{:.2f}",
-                "Proj Hits":"{:.2f}",
-            }),
-            use_container_width=True, hide_index=True
-        )
+            st.dataframe(
+                show_df.style.format({
+                    "wOBA(W)":  "{:.3f}",
+                    "ISO(W)":   "{:.3f}",
+                    "K%(W)":    "{:.1%}",
+                    "Proj TB":  "{:.2f}",
+                    "Proj Hits":"{:.2f}",
+                }),
+                use_container_width=True, hide_index=True
+            )
 
         # Edge calculator for a selected batter
-        bat_names = bw["Name"].tolist()
-        sel_batter = st.selectbox(f"Select batter ({team}) for edge calc",
-                                  bat_names, key=f"bsel_{team}")
-        brow = bw[bw["Name"] == sel_batter].iloc[0]
+        if bw.empty or "Name" not in bw.columns:
+            st.caption("⚠️ No batter data available yet for this team.")
+        else:
+            bat_names  = bw["Name"].dropna().tolist()
+            if not bat_names:
+                st.caption("⚠️ No batter data available yet for this team.")
+            else:
+                sel_batter = st.selectbox(f"Select batter ({team}) for edge calc",
+                                          bat_names, key=f"bsel_{team}")
+                matched = bw[bw["Name"] == sel_batter]
+                brow    = matched.iloc[0] if not matched.empty else bw.iloc[0]
 
-        bcol1, bcol2 = st.columns(2)
-        with bcol1:
-            tb_line = st.number_input(f"TB Line — {sel_batter}",
-                                      min_value=0.5, max_value=6.0,
-                                      value=round(float(brow["Proj TB"]) - 0.5, 1),
-                                      step=0.5, key=f"tb_line_{team}")
-            tb_edge, tb_lbl = confidence_score(float(brow["Proj TB"]), tb_line)
-            st.markdown(f"**Proj TB:** {brow['Proj TB']:.2f}  |  Edge: {'+' if tb_edge>0 else ''}{tb_edge:.1f}%  {badge(tb_lbl)}", unsafe_allow_html=True)
+                raw_tb   = brow.get("Proj TB",   1.5)
+                raw_hits = brow.get("Proj Hits", 1.0)
+                safe_tb   = float(raw_tb)   if pd.notna(raw_tb)   else 1.5
+                safe_hits = float(raw_hits) if pd.notna(raw_hits) else 1.0
 
-        with bcol2:
-            h_line = st.number_input(f"Hits Line — {sel_batter}",
-                                     min_value=0.5, max_value=5.0,
-                                     value=round(float(brow["Proj Hits"]) - 0.5, 1),
-                                     step=0.5, key=f"h_line_{team}")
-            h_edge, h_lbl = confidence_score(float(brow["Proj Hits"]), h_line)
-            st.markdown(f"**Proj Hits:** {brow['Proj Hits']:.2f}  |  Edge: {'+' if h_edge>0 else ''}{h_edge:.1f}%  {badge(h_lbl)}", unsafe_allow_html=True)
+                bcol1, bcol2 = st.columns(2)
+                with bcol1:
+                    tb_default = max(0.5, round(safe_tb - 0.5, 1))
+                    tb_line    = st.number_input(f"TB Line — {sel_batter}",
+                                                 min_value=0.5, max_value=6.0,
+                                                 value=tb_default, step=0.5,
+                                                 key=f"tb_line_{team}")
+                    tb_edge, tb_lbl = confidence_score(safe_tb, tb_line)
+                    st.markdown(f"**Proj TB:** {safe_tb:.2f}  |  Edge: {'+' if tb_edge>0 else ''}{tb_edge:.1f}%  {badge(tb_lbl)}", unsafe_allow_html=True)
+
+                with bcol2:
+                    h_default = max(0.5, round(safe_hits - 0.5, 1))
+                    h_line    = st.number_input(f"Hits Line — {sel_batter}",
+                                                min_value=0.5, max_value=5.0,
+                                                value=h_default, step=0.5,
+                                                key=f"h_line_{team}")
+                    h_edge, h_lbl = confidence_score(safe_hits, h_line)
+                    st.markdown(f"**Proj Hits:** {safe_hits:.2f}  |  Edge: {'+' if h_edge>0 else ''}{h_edge:.1f}%  {badge(h_lbl)}", unsafe_allow_html=True)
 
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
