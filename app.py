@@ -146,6 +146,39 @@ MLB_TEAMS = [
     "PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH"
 ]
 
+# ── 2025 Fallback Standings (used when 2026 data is too thin) ─────────────────
+STANDINGS_2025 = {
+    "ARI": 0.519, "ATL": 0.556, "BAL": 0.543, "BOS": 0.481, "CHC": 0.506,
+    "CWS": 0.364, "CIN": 0.494, "CLE": 0.568, "COL": 0.377, "DET": 0.543,
+    "HOU": 0.531, "KC":  0.519, "LAA": 0.432, "LAD": 0.617, "MIA": 0.414,
+    "MIL": 0.543, "MIN": 0.506, "NYM": 0.531, "NYY": 0.580, "OAK": 0.414,
+    "PHI": 0.568, "PIT": 0.457, "SD":  0.519, "SF":  0.463, "SEA": 0.500,
+    "STL": 0.494, "TB":  0.500, "TEX": 0.457, "TOR": 0.463, "WSH": 0.457,
+}
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_win_pct(team: str) -> tuple[float, str]:
+    """
+    Try to pull live 2026 standings. If fewer than 10 games played,
+    fall back to 2025 final standings. Returns (win_pct, source_label).
+    """
+    try:
+        import pybaseball as pb
+        standings = pb.standings(SEASON_YEAR)
+        if standings:
+            for division_df in standings:
+                if "Tm" in division_df.columns and "W-L%" in division_df.columns:
+                    row = division_df[division_df["Tm"] == team]
+                    if not row.empty:
+                        wpct = float(row["W-L%"].values[0])
+                        g    = int(row["W"].values[0]) + int(row["L"].values[0]) if "W" in row.columns else 0
+                        if g >= 10:
+                            return wpct, "2026 live"
+    except Exception:
+        pass
+    # Fall back to 2025
+    return STANDINGS_2025.get(team, 0.500), "2025 fallback"
+
 # ── Synthetic data generators (stand-ins when pybaseball quota exhausted) ──────
 
 def _synth_pitchers(team: str, n: int = 5) -> pd.DataFrame:
@@ -203,7 +236,7 @@ def load_pitching_data(team: str) -> dict:
         cols = ["Name","Team","G","IP","ERA","FIP","K/9","K%","WHIP","H/9","Velo"]
 
         def _fetch(s, e):
-            df = pb.pitching_stats(SEASON_YEAR, qual=10)
+            df = pb.pitching_stats(SEASON_YEAR, qual=1)
             if df is None or df.empty:
                 raise ValueError("Empty result")
             df = df[df["Team"] == team].copy() if "Team" in df.columns else df.copy()
@@ -263,7 +296,7 @@ def load_batting_data(team: str) -> dict:
         l14_start  = (today - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
 
         def _fetch():
-            df = pb.batting_stats(SEASON_YEAR, qual=30)
+            df = pb.batting_stats(SEASON_YEAR, qual=1)
             if df is None or df.empty:
                 raise ValueError("Empty")
             return df[df["Team"] == team].copy() if "Team" in df.columns else df.copy()
@@ -304,7 +337,7 @@ def get_probable_starters(team: str) -> str:
     """Return a plausible starter name (live lookup attempted, fallback synthetic)."""
     try:
         import pybaseball as pb
-        df = pb.pitching_stats(SEASON_YEAR, qual=15)
+        df = pb.pitching_stats(SEASON_YEAR, qual=1)
         if df is not None and not df.empty and "Team" in df.columns:
             sub = df[df["Team"] == team]
             if not sub.empty:
@@ -407,9 +440,6 @@ with st.sidebar:
     team_a = st.selectbox("🏠 Home Team", MLB_TEAMS, index=MLB_TEAMS.index("NYY"))
     team_b = st.selectbox("✈️ Away Team", MLB_TEAMS, index=MLB_TEAMS.index("BOS"))
 
-    team_a_wpct = st.slider(f"{team_a} Win %", 0.35, 0.70, 0.52, 0.01)
-    team_b_wpct = st.slider(f"{team_b} Win %", 0.35, 0.70, 0.49, 0.01)
-
     ou_line   = st.number_input("O/U Line", min_value=5.0, max_value=14.0, value=8.5, step=0.5)
     rl_line   = st.number_input("Run Line", value=-1.5, step=0.5)
 
@@ -429,6 +459,15 @@ with st.spinner("Fetching 2026 data from pybaseball…"):
     pitch_b = load_pitching_data(team_b)
     bat_a   = load_batting_data(team_a)
     bat_b   = load_batting_data(team_b)
+    team_a_wpct, wpct_src_a = get_win_pct(team_a)
+    team_b_wpct, wpct_src_b = get_win_pct(team_b)
+
+# Show win% source in sidebar after data loads
+with st.sidebar:
+    st.markdown("---")
+    st.markdown('<p class="sharp-header">Win % Source</p>', unsafe_allow_html=True)
+    st.caption(f"{team_a}: **{team_a_wpct:.3f}** ({wpct_src_a})")
+    st.caption(f"{team_b}: **{team_b_wpct:.3f}** ({wpct_src_b})")
 
 starter_a = get_probable_starters(team_a)
 starter_b = get_probable_starters(team_b)
