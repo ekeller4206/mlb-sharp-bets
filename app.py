@@ -259,7 +259,7 @@ def load_pitching_data(team: str) -> dict:
                 df["G"] = 1
             if "IP" not in df.columns:
                 df["IP"] = df["G"] * 5.0
-            return df[["Name","Team","G","IP","ERA","FIP","K/9","K%","WHIP","H/9","Velo"]].dropna(subset=["ERA"])
+            return df[["Name","Team","G","IP","ERA","FIP","K/9","K%","WHIP","H/9","Velo"]].reset_index(drop=True)
 
         season_df = _clean(season_raw)
         l14_df    = _clean(l14_raw)
@@ -309,7 +309,7 @@ def load_batting_data(team: str) -> dict:
             for c in ["wOBA","ISO","K%","AVG","OBP","SLG","PA"]:
                 if c not in df.columns:
                     df[c] = np.nan
-            return df[["Name","Team","PA","AVG","OBP","SLG","wOBA","ISO","K%"]].dropna(subset=["wOBA"])
+            return df[["Name","Team","PA","AVG","OBP","SLG","wOBA","ISO","K%"]].reset_index(drop=True)
 
         season_df = _clean(season_raw)
         l14_df    = _clean(l14_raw)
@@ -472,11 +472,33 @@ with st.sidebar:
 starter_a = get_probable_starters(team_a)
 starter_b = get_probable_starters(team_b)
 
-# Pull weighted starter row (first row of weighted pitching = presumed SP)
+# Pull weighted starter row — fully crash-safe
+_FALLBACK_SP = pd.Series({
+    "Name": "TBD", "Team": "???", "G": 1, "IP": 5.0,
+    "ERA": LEAGUE_AVG_FIP, "FIP": LEAGUE_AVG_FIP,
+    "K/9": 8.5, "K%": LEAGUE_AVG_K_PCT,
+    "WHIP": 1.25, "H/9": 8.5, "Velo": 93.0,
+    "W_ERA": LEAGUE_AVG_FIP, "W_FIP": LEAGUE_AVG_FIP,
+    "W_K%": LEAGUE_AVG_K_PCT, "W_WHIP": 1.25,
+    "W_H/9": 8.5, "W_K/9": 8.5, "W_Velo": 93.0,
+})
+
 def get_starter_row(pitch_dict: dict, name: str) -> pd.Series:
-    w = pitch_dict["weighted"]
-    row = w[w["Name"].str.contains(name.split("(")[0].strip(), na=False)]
-    return row.iloc[0] if not row.empty else w.iloc[0]
+    try:
+        df = pitch_dict.get("weighted", pd.DataFrame())
+        if df.empty:
+            return _FALLBACK_SP.copy()
+        # Try to match by name first
+        clean = name.split("(")[0].strip()
+        if clean and "Name" in df.columns:
+            row = df[df["Name"].str.contains(clean, na=False, regex=False)]
+            if not row.empty:
+                return row.iloc[0]
+        # Fall back to best FIP row
+        sort_col = "W_FIP" if "W_FIP" in df.columns else ("FIP" if "FIP" in df.columns else df.columns[0])
+        return df.sort_values(sort_col).iloc[0]
+    except Exception:
+        return _FALLBACK_SP.copy()
 
 sp_a = get_starter_row(pitch_a, starter_a)
 sp_b = get_starter_row(pitch_b, starter_b)
@@ -501,14 +523,26 @@ whip_b  = w(sp_b, "WHIP")
 
 # Team batting weighted wOBA (mean of lineup)
 def team_woba(bat_dict):
-    w_ = bat_dict["weighted"]
-    c  = "W_wOBA" if "W_wOBA" in w_.columns else "wOBA"
-    return float(w_[c].mean())
+    try:
+        w_ = bat_dict["weighted"]
+        if w_.empty:
+            return LEAGUE_AVG_WOBA
+        c = "W_wOBA" if "W_wOBA" in w_.columns else "wOBA"
+        val = w_[c].mean()
+        return float(val) if pd.notna(val) else LEAGUE_AVG_WOBA
+    except Exception:
+        return LEAGUE_AVG_WOBA
 
 def team_kpct(bat_dict):
-    w_ = bat_dict["weighted"]
-    c  = "W_K%" if "W_K%" in w_.columns else "K%"
-    return float(w_[c].mean())
+    try:
+        w_ = bat_dict["weighted"]
+        if w_.empty:
+            return LEAGUE_AVG_K_PCT
+        c = "W_K%" if "W_K%" in w_.columns else "K%"
+        val = w_[c].mean()
+        return float(val) if pd.notna(val) else LEAGUE_AVG_K_PCT
+    except Exception:
+        return LEAGUE_AVG_K_PCT
 
 woba_a = team_woba(bat_a)
 woba_b = team_woba(bat_b)
