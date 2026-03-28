@@ -806,21 +806,33 @@ with tab_roster:
     ]:
         with col:
             st.markdown(f"#### {team}")
+
             section("Pitchers")
             pw = pitch_dict["weighted"]
-            show_p_cols = ["Name"] + [c for c in pw.columns if c.startswith("W_")] + ["Velo"]
-            show_p_cols = [c for c in show_p_cols if c in pw.columns]
-            st.dataframe(pw[show_p_cols].rename(
-                columns={c: c.replace("W_","") for c in show_p_cols}
-            ).head(7), use_container_width=True, hide_index=True)
+            if pw.empty:
+                st.caption("⚠️ No pitcher data yet.")
+            else:
+                # Only grab W_ cols + Name/Velo — rename W_ERA→ERA(W) etc. to avoid dupes
+                w_cols   = [c for c in pw.columns if c.startswith("W_")]
+                p_cols   = ["Name"] + w_cols + (["Velo"] if "Velo" in pw.columns else [])
+                rename   = {c: c.replace("W_", "") + "(W)" for c in w_cols}
+                st.dataframe(
+                    pw[p_cols].rename(columns=rename).head(7),
+                    use_container_width=True, hide_index=True
+                )
 
             section("Batters")
             bw = bat_dict["weighted"]
-            show_b_cols = ["Name"] + [c for c in bw.columns if c.startswith("W_")]
-            show_b_cols = [c for c in show_b_cols if c in bw.columns]
-            st.dataframe(bw[show_b_cols].rename(
-                columns={c: c.replace("W_","") for c in show_b_cols}
-            ).head(9), use_container_width=True, hide_index=True)
+            if bw.empty:
+                st.caption("⚠️ No batter data yet.")
+            else:
+                w_cols = [c for c in bw.columns if c.startswith("W_")]
+                b_cols = ["Name"] + w_cols
+                rename = {c: c.replace("W_", "") + "(W)" for c in w_cols}
+                st.dataframe(
+                    bw[b_cols].rename(columns=rename).head(9),
+                    use_container_width=True, hide_index=True
+                )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 · RAW DATA
@@ -836,7 +848,10 @@ with tab_data:
         d = bat_a if view_team == team_a else bat_b
 
     key = {"Season":"season","L14":"l14","Weighted":"weighted"}[view_window]
-    st.dataframe(d[key], use_container_width=True, hide_index=True)
+    raw_df = d[key]
+    # Deduplicate columns before rendering
+    raw_df = raw_df.loc[:, ~raw_df.columns.duplicated()]
+    st.dataframe(raw_df, use_container_width=True, hide_index=True)
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
     st.caption(
